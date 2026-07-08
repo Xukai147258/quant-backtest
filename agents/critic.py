@@ -25,15 +25,20 @@ class CriticAgent:
     def _load_checklist(self) -> List[Dict[str, str]]:
         """从 checklist.md 加载检查项。"""
         items = []
+        current_marker = ""
         try:
             with open(self.checklist_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
+                    mm = re.match(r"^#{1,3}\s.*\[(\w+)\]", line)
+                    if mm:
+                        current_marker = mm.group(1)
+                        continue
                     m = re.match(r"^- \[ \]\s+(.*)", line)
                     if m:
-                        items.append({"check": m.group(1), "pass": True, "detail": ""})
+                        items.append({"check": m.group(1), "marker": current_marker, "pass": True, "detail": ""})
         except FileNotFoundError:
-            items = [{"check": "checklist.md not found", "pass": False, "detail": "path: " + self.checklist_path}]
+            items = [{"check": "checklist.md not found", "marker": "", "pass": False, "detail": "path: " + self.checklist_path}]
         return items
 
     def review(self, builder_proposal: Dict, backtest_context: Dict) -> Dict:
@@ -54,7 +59,8 @@ class CriticAgent:
 
         for item in self.checklist_items:
             check_text = item["check"]
-            passed, detail = self._evaluate_check(check_text, builder_proposal, backtest_context)
+            marker = item.get("marker", "")
+            passed, detail = self._evaluate_check(check_text, marker, builder_proposal, backtest_context)
             findings.append({"check": check_text, "pass": passed, "detail": detail})
 
         # 计算 verdict
@@ -86,7 +92,7 @@ class CriticAgent:
             "critical_failures": len(critical_failures),
         }
 
-    def _evaluate_check(self, check_text: str, proposal: Dict, ctx: Dict) -> tuple:
+    def _evaluate_check(self, check_text: str, marker: str, proposal: Dict, ctx: Dict) -> tuple:
         """评估单条检查项。返回 (passed: bool, detail: str)。"""
         # Purging gap 检查
         if "Purging" in check_text or "purge" in check_text.lower():
