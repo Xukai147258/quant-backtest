@@ -42,6 +42,7 @@ class WalkForwardBacktester:
         purge_days: int = 5,
         embargo_days: int = 10,
         initial_investment: float = 1_000_000.0,
+        strategy_name: Optional[str] = None,
     ):
         self.prices = prices
         self.cost_model = cost_model
@@ -51,6 +52,7 @@ class WalkForwardBacktester:
         self.purge_days = purge_days
         self.embargo_days = embargo_days
         self.initial_investment = initial_investment
+        self.strategy_name = strategy_name
 
     def run(self) -> Dict[str, Any]:
         """运行 Expanding Window 回测。
@@ -145,8 +147,12 @@ class WalkForwardBacktester:
             train_cov = train_returns.cov()
 
             # --- 执行策略 ---
-            pool_items = list(self.strategy_pool.items())
-            strategy_name, strategy_fn = pool_items[0]
+            if self.strategy_name is not None and self.strategy_name in self.strategy_pool:
+                strategy_name = self.strategy_name
+                strategy_fn = self.strategy_pool[self.strategy_name]
+            else:
+                pool_items = list(self.strategy_pool.items())
+                strategy_name, strategy_fn = pool_items[0]
             weights = strategy_fn(train_returns, train_cov)
             weights = np.asarray(weights, dtype=float)
             if not np.all(np.isfinite(weights)):
