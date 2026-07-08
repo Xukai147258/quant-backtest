@@ -99,13 +99,22 @@ class WalkForwardBacktester:
                 break
             train_end_date = idx[train_end_idx]
 
-            # Purging: 训练集截至 train_end - purge_days
-            train_cutoff = train_end_date - timedelta(days=self.purge_days)
-            train_mask = idx <= train_cutoff
-            # T1: Embargo exclusion — 排除上一轮测试期及其前后的数据
+            # Training includes ALL data up to train_end_date (Lopez de Prado purged walk-forward)
+            # Then Purging removes labels overlapping with test, Embargo removes serial corr zone
+            # Training data: all data up to train_end_date, then Purging and
+            # Embargo act as exclusion masks within that range.
+            train_mask = idx <= train_end_date
+
+            # Purging: exclude zone [train_end - purge, train_end]
+            purge_start = train_end_date - timedelta(days=self.purge_days)
+            train_mask = train_mask & ~((idx >= purge_start) & (idx <= train_end_date))
+
+            # T1: Embargo exclusion — exclude [prev_test_end, prev_test_end + embargo]
             if prev_test_end_date is not None:
-                embargo_start = prev_test_end_date  # Lopez de Prado: embargo starts AT test_end, not test_end - purge
-                embargo_end = prev_test_end_date + timedelta(days=self.embargo_days)
+                # Embargo: exclude data from the training set near the test period
+                # Removes [train_end - embargo, train_end - 1]
+                embargo_start = train_end_date - timedelta(days=self.embargo_days)
+                embargo_end = train_end_date - timedelta(days=1)
                 train_mask = train_mask & ~((idx >= embargo_start) & (idx <= embargo_end))
 
             if train_mask.sum() < 20:

@@ -128,7 +128,9 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         # 从裁剪后的算术收益率重建价格（首日收益率 NaN 填 0 = 无变化）
         base_price = result[col].iloc[0]
         cum_rets = (1.0 + clipped_rets.fillna(0.0)).cumprod()
-        result[col] = base_price * cum_rets.values
+        # Prepend 1.0 (no change on day 0) to align N-1 cumprod array with N-length DataFrame
+        cum_rets_aligned = np.concatenate([[1.0], cum_rets.values])
+        result[col] = base_price * cum_rets_aligned
 
     return result
 
