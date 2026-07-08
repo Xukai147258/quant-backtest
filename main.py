@@ -17,6 +17,16 @@ from agents.meta_learner import MetaLearner
 from agents.orchestrator import Orchestrator
 from report import generate_final_report
 
+def _momentum_weights(r, lookback=63):
+    if len(r) < lookback:
+        return np.ones(r.shape[1]) / r.shape[1]
+    cum_ret = (1 + r.iloc[-lookback:]).prod() - 1
+    w = np.maximum(cum_ret.values, 0)
+    if w.sum() > 0:
+        return w / w.sum()
+    return np.ones(r.shape[1]) / r.shape[1]
+
+
 def _defensive_weights(rets):
     n = rets.shape[1]; w = np.ones(n) / n
     w[-min(3,n):] *= 2; return w / w.sum()
@@ -47,7 +57,7 @@ def run_backtest(prices, cost_model=None):
         except ValueError: hs = 0
         sent = compute_trend_sentiment(prices.loc[:cd])
         pool = {"eq": lambda r: np.ones(prices.shape[1]) / prices.shape[1],
-                "mom": lambda r: np.abs(r.iloc[-1].values)/max(np.abs(r.iloc[-1]).sum(),1e-10),
+                "mom": lambda r: _momentum_weights(r, 63),
                 "rp": lambda r: (1/np.maximum(r.std(),1e-10).values)/(1/np.maximum(r.std(),1e-10)).sum(),
                 "def": lambda r: _defensive_weights(r)}
         ctx = {

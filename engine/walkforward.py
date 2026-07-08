@@ -166,7 +166,7 @@ class WalkForwardBacktester:
                 # Use nominal trade value = initial_investment * current portfolio_value * turnover
                 trade_value = self.initial_investment * portfolio_value * turnover
                 abs_cost = self.cost_model.round_trip_cost(trade_value)
-                cost_pct = abs_cost / max(self.initial_investment * portfolio_value, self.initial_investment)
+                cost_pct = abs_cost / (self.initial_investment * portfolio_value)
                 cost_pct = min(cost_pct, 0.005)  # cap at 0.5% of portfolio
                 portfolio_value *= (1.0 - cost_pct)
                 equity_series.append(portfolio_value)
