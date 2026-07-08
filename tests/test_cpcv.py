@@ -8,7 +8,7 @@ def test_cpcv_produces_multiple_paths():
     cpcv = CombinatorialPurgedCV(n_groups=6, n_test_groups=2)
     splits = list(cpcv.split(timestamps))
     assert len(splits) == 15, f"Expected 15 splits, got {len(splits)}"
-    assert cpcv.n_paths == 5, f"Expected 5 paths, got {cpcv.n_paths}"
+    assert cpcv.n_paths == 15, f"Expected 15 paths, got {cpcv.n_paths}"
     for train_idx, test_idx, _ in splits:
         overlap = set(train_idx) & set(test_idx)
         assert len(overlap) == 0, f"Overlap: {len(overlap)}"

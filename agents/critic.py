@@ -35,7 +35,7 @@ class CriticAgent:
                         continue
                     m = re.match(r"^\s*- \[ \]\s+(.*)", line)
                     if m:
-                        items.append({"check": m.group(1), "pass": True, "detail": ""})
+                        items.append({"check": m.group(1), "pass": True, "detail": "", "marker": current_marker})
         except FileNotFoundError:
             items = [{"check": "checklist.md not found", "pass": False, "detail": "path: " + self.checklist_path}]
         return items
@@ -58,7 +58,7 @@ class CriticAgent:
 
         for item in self.checklist_items:
             check_text = item["check"]
-            passed, detail = self._evaluate_check(check_text, builder_proposal, backtest_context)
+            passed, detail = self._evaluate_check(check_text, item.get("marker", ""), builder_proposal, backtest_context)
             findings.append({"check": check_text, "pass": passed, "detail": detail})
 
         # 计算 verdict
@@ -90,7 +90,7 @@ class CriticAgent:
             "critical_failures": len(critical_failures),
         }
 
-    def _evaluate_check(self, check_text: str, proposal: Dict, ctx: Dict) -> tuple:
+    def _evaluate_check(self, check_text: str, marker: str, proposal: Dict, ctx: Dict) -> tuple:
         """评估单条检查项。返回 (passed: bool, detail: str)。"""
 
         # LOOKAHEAD
