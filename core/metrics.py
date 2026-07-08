@@ -144,8 +144,8 @@ def compute_all_metrics(
         roll_sharpe_mean = sharpe
 
     # --- DSR ---
-    # n_obs = 观测数量（日频≈252/年），Harvey-Liu-Zhu (2016) 公式使用观测数
-    n_obs = len(returns)
+    # n_obs must be in the same time scale as Sharpe. Sharpe is annualized, so n_obs = years.
+    n_obs = max(len(returns) / ann_factor, 1.5)
     dsr_result = compute_dsr(sharpe, n_trials, n_obs, skewness, kurtosis)
 
     # --- 超额收益 ---
@@ -225,7 +225,7 @@ def compute_dsr(
     sigma_SR = np.sqrt(max(var_SR, 1e-10))
     e_max = sigma_SR * np.sqrt(2 * np.log(n_trials))
 
-    if sigma_SR <= 1e-10 or n_obs < 1.5:  # need >= 1.5 years of data for meaningful DSR
+    if sigma_SR <= 1e-10 or n_obs < 1.0:  # need >= 1 year of data for meaningful DSR
         return {"deflated_sharpe": sharpe, "p_value": 1.0, "e_max": 0.0}
 
     dsr_raw = (sharpe - e_max) / sigma_SR
