@@ -116,7 +116,9 @@ class WalkForwardBacktester:
             test_start_mask = idx > train_end_date + timedelta(days=self.purge_days)
             if not test_start_mask.any():
                 break
-            test_start_date = idx[test_start_mask][0]
+           test_start_date = idx[test_start_mask][0]
+            assert (test_start_date - train_end_date).days >= self.purge_days, \
+                f"Purge/Embargo violation: test_start={test_start_date}, train_end={train_end_date}, purge_days={self.purge_days}"
 
             # Test 结束：test_start + step_months
             test_end_candidate = test_start_date + pd.DateOffset(months=self.step_months)
