@@ -43,6 +43,7 @@ class WalkForwardBacktester:
         embargo_days: int = 10,
         initial_investment: float = 1_000_000.0,
         strategy_name: Optional[str] = None,
+        on_step_end: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self.prices = prices
         self.cost_model = cost_model
@@ -53,6 +54,7 @@ class WalkForwardBacktester:
         self.embargo_days = embargo_days
         self.initial_investment = initial_investment
         self.strategy_name = strategy_name
+        self.on_step_end = on_step_end
 
     def run(self) -> Dict[str, Any]:
         """运行 Expanding Window 回测。
@@ -194,6 +196,19 @@ class WalkForwardBacktester:
             test_ends.append(test_end_date)
             prev_weights = weights
             prev_test_end_date = test_end_date  # store for next iteration's embargo
+
+            # Post-step callback for online learning / external tracking
+            if self.on_step_end is not None:
+                test_rets_period = test_data.pct_change().iloc[1:]
+                port_ret = float(test_rets_period.dot(weights).mean())
+                self.on_step_end({
+                    "test_start": test_start_date,
+                    "test_end": test_end_date,
+                    "weights": weights.copy(),
+                    "portfolio_return": port_ret,
+                    "test_returns": test_rets_period,
+                })
+
             step += 1
 
         equity_curve = pd.Series(equity_series, index=pd.DatetimeIndex(equity_dates)) if len(equity_dates) > 0 else pd.Series(equity_series, dtype=float)
