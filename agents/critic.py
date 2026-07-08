@@ -29,7 +29,11 @@ class CriticAgent:
             with open(self.checklist_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    m = re.match(r"^- \[ \]\s+(.*)", line)
+                    mm = re.match(r"^\s*#{1,3}\s.*\[(\w+)\]", line)
+                    if mm:
+                        current_marker = mm.group(1)
+                        continue
+                    m = re.match(r"^\s*- \[ \]\s+(.*)", line)
                     if m:
                         items.append({"check": m.group(1), "pass": True, "detail": ""})
         except FileNotFoundError:
@@ -88,146 +92,173 @@ class CriticAgent:
 
     def _evaluate_check(self, check_text: str, proposal: Dict, ctx: Dict) -> tuple:
         """评估单条检查项。返回 (passed: bool, detail: str)。"""
-        # Purging gap 检查
-        if "Purging" in check_text or "purge" in check_text.lower():
-            train_end = ctx.get("train_end")
-            test_start = ctx.get("test_start")
-            if train_end and test_start:
-                gap = (test_start - train_end).days if hasattr(test_start - train_end, "days") else 0
-                if gap >= 5:
-                    return True, f"Purge gap={gap}d >= 5d"
-                else:
-                    return False, f"Purge gap={gap}d < 5d"
-            return False, "Missing train_end or test_start"
 
-        # Embargo 检查
-        if "Embargo" in check_text or "embargo" in check_text.lower():
-            if ctx.get("embargo_days", 0) >= 10:
-                return True, f"Embargo={ctx['embargo_days']}d >= 10d"
-            return False, f"Embargo={ctx.get('embargo_days', 0)}d < 10d"
+        # LOOKAHEAD
+        if marker == "LOOKAHEAD":
+            if "Purging" in check_text or "purge" in check_text.lower():
+                train_end = ctx.get("train_end")
+                test_start = ctx.get("test_start")
+                if train_end and test_start:
+                    gap = (test_start - train_end).days if hasattr(test_start - train_end, "days") else 0
+                    if gap >= 5:
+                        return True, f"Purge gap={gap}d >= 5d"
+                    else:
+                        return False, f"Purge gap={gap}d < 5d"
+                return False, "Missing train_end or test_start"
 
-        # 做空约束
-        if "做空" in check_text or "short" in check_text.lower():
+            if "Embargo" in check_text or "embargo" in check_text.lower():
+                if ctx.get("embargo_days", 0) >= 10:
+                    return True, f"Embargo={ctx['embargo_days']}d >= 10d"
+                return False, f"Embargo={ctx.get('embargo_days', 0)}d < 10d"
+
+            if "HMM" in check_text and "全局" in check_text:
+                if not ctx.get("hmm_global_scaling", False):
+                    return True, "HMM uses rolling fit (no global scaling)"
+                return False, "HMM may use global scaling \u2192 look-ahead bias risk"
+
+            if "扩窗" in check_text or "滚动" in check_text:
+                if ctx.get("rolling_expanding", True):
+                    return True, "Rolling indicators use expanding window"
+                return False, "Rolling indicators may use full-sample data"
+
+            return True, "Auto-pass for LOOKAHEAD"
+
+        # SHORT
+        if marker == "SHORT":
             w = proposal.get("weights", [])
-            if all(w >= 0):
-                return True, "All weights >= 0"
-            return False, "Short positions detected"
+            if ">= 0" in check_text or "做空" in check_text:
+                if all(w >= 0):
+                    return True, "All weights >= 0"
+                return False, "Short positions detected"
+            if "= 1" in check_text or "满仓" in check_text or "权重和" in check_text:
+                if abs(sum(w) - 1.0) < 0.01:
+                    return True, f"Weights sum to {sum(w):.4f}"
+                return False, f"Weights sum to {sum(w):.4f}, expected 1.0"
+            if "40%" in check_text or "上限" in check_text or "单标" in check_text:
+                if max(w) <= 0.4:
+                    return True, f"Max weight={max(w):.2f} <= 0.4"
+                return False, f"Max weight={max(w):.2f} > 0.4"
+            return True, "Auto-pass for SHORT"
 
-        # 权重和
-        if "权重和" in check_text or "sum" in check_text.lower():
-            w = proposal.get("weights", [])
-            if abs(sum(w) - 1.0) < 0.01:
-                return True, f"Weights sum to {sum(w):.4f}"
-            return False, f"Weights sum to {sum(w):.4f}, expected 1.0"
+        # SPLIT
+        if marker == "SPLIT":
+            if "测试集" in check_text and "1 次" in check_text:
+                if ctx.get("test_run_count", 0) <= 1:
+                    return True, f"Test run count = {ctx.get('test_run_count', 1)}"
+                return False, f"Test run count = {ctx.get('test_run_count')} > 1"
+            if "样本" in check_text:
+                n = ctx.get("n_samples", 0)
+                if n >= 200:
+                    return True, f"Samples={n} >= 200"
+                return False, f"Samples={n} < 200"
+            if "日志" in check_text:
+                if ctx.get("train_end") and ctx.get("test_start"):
+                    return True, f"Log: train_end={ctx['train_end']}, test_start={ctx['test_start']}"
+                return False, "Missing train_end/test_start in logs"
+            return True, "Auto-pass for SPLIT"
 
-        # 单标的上限
-        if "上限" in check_text or "max" in check_text.lower():
-            w = proposal.get("weights", [])
-            if max(w) <= 0.4:
-                return True, f"Max weight={max(w):.2f} <= 0.4"
-            return False, f"Max weight={max(w):.2f} > 0.4"
+        # CLEAN
+        if marker == "CLEAN":
+            if "样本" in check_text:
+                n = ctx.get("n_samples", 0)
+                if n >= 200:
+                    return True, f"Samples={n} >= 200"
+                return False, f"Samples={n} < 200"
+            return True, "Auto-pass for CLEAN"
 
-        # 测试集只跑 1 次
-        if "测试集" in check_text and "1 次" in check_text:
-            if ctx.get("test_run_count", 0) <= 1:
-                return True, f"Test run count = {ctx.get('test_run_count', 1)}"
-            return False, f"Test run count = {ctx.get('test_run_count')} > 1"
+        # COST
+        if marker == "COST":
+            if "佣金" in check_text and "最低" not in check_text:
+                rate = ctx.get("commission_rate", 0.00025)
+                if rate >= 0.00025:
+                    return True, f"Commission rate={rate:.5f} >= 0.00025"
+                return False, f"Commission rate={rate:.5f} < 0.00025"
+            if "最低佣金" in check_text:
+                min_comm = ctx.get("min_commission", 5.0)
+                if min_comm >= 5.0:
+                    return True, f"Min commission={min_comm:.1f} >= 5.0"
+                return False, f"Min commission={min_comm:.1f} < 5.0"
+            if "滑点" in check_text:
+                slip = ctx.get("slippage_bps", 2.0)
+                if slip >= 2.0:
+                    return True, f"Slippage={slip:.1f}bp >= 2bp"
+                return False, f"Slippage={slip:.1f}bp < 2bp"
+            if "冲击成本" in check_text or "非线性" in check_text:
+                if ctx.get("impact_model", "") in ("sqrt", "almgren-chriss"):
+                    return True, f"Impact model={ctx['impact_model']} (nonlinear)"
+                return False, "Impact model is linear or missing"
+            if "换手率" in check_text:
+                ann_to = ctx.get("annual_turnover", 0)
+                if ann_to <= 3.0:
+                    return True, f"Annual turnover={ann_to:.1%} <= 300%"
+                return False, f"Annual turnover={ann_to:.1%} > 300%"
+            return True, "Auto-pass for COST"
 
-        # 数据量 / 样本检查
-        if "样本" in check_text:
-            n = ctx.get("n_samples", 0)
-            if n >= 200:
-                return True, f"Samples={n} >= 200"
-            return False, f"Samples={n} < 200"
+        # MODEL_EVAL
+        if marker == "MODEL_EVAL":
+            if "BIC" in check_text or "AIC" in check_text:
+                if ctx.get("hmm_bic_recorded", False):
+                    return True, f"BIC recorded: {ctx.get('hmm_bic_value', 'N/A')}"
+                return False, "BIC/AIC not recorded for HMM selection"
+            if "扩窗" in check_text or "滚动" in check_text:
+                if ctx.get("rolling_expanding", True):
+                    return True, "Rolling indicators use expanding window"
+                return False, "Rolling indicators may use full-sample data"
+            return True, "Auto-pass for MODEL_EVAL"
 
-        # 佣金费率检查
-        if "佣金" in check_text:
-            rate = ctx.get("commission_rate", 0.00025)
-            if rate >= 0.00025:
-                return True, f"Commission rate={rate:.5f} >= 0.00025"
-            return False, f"Commission rate={rate:.5f} < 0.00025"
+        # OVERFIT
+        if marker == "OVERFIT":
+            if "Deflated Sharpe" in check_text or "DSR" in check_text:
+                dsr_p = ctx.get("dsr_p_value", 1.0)
+                if dsr_p < 0.05:
+                    return True, f"DSR p={dsr_p:.4f} < 0.05"
+                return False, f"DSR p={dsr_p:.4f} >= 0.05 (not significant)"
+            if "PBO" in check_text:
+                pbo = ctx.get("pbo_value", 1.0)
+                if pbo < 0.3:
+                    return True, f"PBO={pbo:.3f} < 0.3"
+                return False, f"PBO={pbo:.3f} >= 0.3 (overfitting risk)"
+            if "参数敏感性" in check_text or "参数搜索" in check_text:
+                if ctx.get("sensitivity_done", False):
+                    return True, "Parameter sensitivity analysis completed"
+                return False, "Parameter sensitivity analysis not done"
+            return True, "Auto-pass for OVERFIT"
 
-        # 最低佣金检查
-        if "最低佣金" in check_text:
-            min_comm = ctx.get("min_commission", 5.0)
-            if min_comm >= 5.0:
-                return True, f"Min commission={min_comm:.1f} >= 5.0"
-            return False, f"Min commission={min_comm:.1f} < 5.0"
+        # SNOOPING
+        if marker == "SNOOPING":
+            if "PBO" in check_text:
+                pbo = ctx.get("pbo_value", 1.0)
+                if pbo < 0.3:
+                    return True, f"PBO={pbo:.3f} < 0.3"
+                return False, f"PBO={pbo:.3f} >= 0.3 (overfitting risk)"
+            if "Deflated Sharpe" in check_text or "p-value" in check_text:
+                dsr_p = ctx.get("dsr_p_value", 1.0)
+                if dsr_p < 0.05:
+                    return True, f"DSR p={dsr_p:.4f} < 0.05"
+                return False, f"DSR p={dsr_p:.4f} >= 0.05 (not significant)"
+            if "测试集" in check_text:
+                if ctx.get("test_run_count", 0) <= 1:
+                    return True, f"Test run count = {ctx.get('test_run_count', 1)}"
+                return False, f"Test run count = {ctx.get('test_run_count')} > 1"
+            return True, "Auto-pass for SNOOPING"
 
-        # 滑点检查
-        if "滑点" in check_text:
-            slip = ctx.get("slippage_bps", 2.0)
-            if slip >= 2.0:
-                return True, f"Slippage={slip:.1f}bp >= 2bp"
-            return False, f"Slippage={slip:.1f}bp < 2bp"
-
-        # 冲击成本非线性检查
-        if "冲击成本" in check_text or "非线性" in check_text:
-            if ctx.get("impact_model", "") in ("sqrt", "almgren-chriss"):
-                return True, f"Impact model={ctx['impact_model']} (nonlinear)"
-            return False, "Impact model is linear or missing"
-
-        # 年化换手率
-        if "换手率" in check_text:
-            ann_to = ctx.get("annual_turnover", 0)
-            if ann_to <= 3.0:
-                return True, f"Annual turnover={ann_to:.1%} <= 300%"
-            return False, f"Annual turnover={ann_to:.1%} > 300%"
-
-        # 前视偏差 — HMM
-        if "前视偏差" in check_text and "HMM" in check_text:
-            if not ctx.get("hmm_global_scaling", False):
-                return True, "HMM uses rolling fit (no global scaling)"
-            return False, "HMM may use global scaling → look-ahead bias risk"
-
-        # 前视偏差 — 滚动指标
-        if "前视偏差" in check_text or "扩窗" in check_text:
-            if ctx.get("rolling_expanding", True):
-                return True, "Rolling indicators use expanding window"
-            return False, "Rolling indicators may use full-sample data"
-
-        # HMM BIC/AIC
-        if "BIC" in check_text or "AIC" in check_text:
-            if ctx.get("hmm_bic_recorded", False):
-                return True, f"BIC recorded: {ctx.get('hmm_bic_value', 'N/A')}"
-            return False, "BIC/AIC not recorded for HMM selection"
-
-        # PBO 检查
-        if "PBO" in check_text:
-            pbo = ctx.get("pbo_value", 1.0)
-            if pbo < 0.3:
-                return True, f"PBO={pbo:.3f} < 0.3"
-            return False, f"PBO={pbo:.3f} >= 0.3 (overfitting risk)"
-
-        # DSR p-value 检查
-        if "Deflated Sharpe" in check_text or "DSR" in check_text:
-            dsr_p = ctx.get("dsr_p_value", 1.0)
-            if dsr_p < 0.05:
-                return True, f"DSR p={dsr_p:.4f} < 0.05"
-            return False, f"DSR p={dsr_p:.4f} >= 0.05 (not significant)"
-
-        # 参数敏感性
-        if "参数敏感性" in check_text or "参数搜索" in check_text:
-            if ctx.get("sensitivity_done", False):
-                return True, "Parameter sensitivity analysis completed"
-            return False, "Parameter sensitivity analysis not done"
-
-        # 日志记录
-        if "日志" in check_text and ("train_end" in check_text or "调仓" in check_text):
-            if ctx.get("train_end") and ctx.get("test_start"):
-                return True, f"Log: train_end={ctx['train_end']}, test_start={ctx['test_start']}"
-            return False, "Missing train_end/test_start in logs"
-
-        # 策略池可注入
-        if "策略池" in check_text:
-            if ctx.get("strategy_pool_injectable", True):
-                return True, "Strategy pool is injectable"
-            return False, "Strategy pool is hardcoded"
-
-        # 幸存者偏差
-        if "幸存者" in check_text or "Survivorship" in check_text:
+        # SURVIVOR
+        if marker == "SURVIVOR":
             if ctx.get("survivorship_noted", False):
                 return True, "Survivorship bias acknowledged/documented"
             return False, "Survivorship bias not addressed"
 
+        # E2E
+        if marker == "E2E":
+            if "日志" in check_text and "train_end" in check_text:
+                if ctx.get("train_end") and ctx.get("test_start"):
+                    return True, f"Log: train_end={ctx['train_end']}, test_start={ctx['test_start']}"
+                return False, "Missing train_end/test_start in logs"
+            if "策略池" in check_text:
+                if ctx.get("strategy_pool_injectable", True):
+                    return True, "Strategy pool is injectable"
+                return False, "Strategy pool is hardcoded"
+            return True, "Auto-pass for E2E"
+
+        # Default fallback
         return True, "Auto-pass (no specific check rule)"
