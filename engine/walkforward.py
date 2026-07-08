@@ -42,6 +42,8 @@ class WalkForwardBacktester:
         purge_days: int = 5,
         embargo_days: int = 10,
         initial_investment: float = 1_000_000.0,
+        strategy_name: Optional[str] = None,
+        on_step_end: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         self.prices = prices
         self.cost_model = cost_model
@@ -51,6 +53,8 @@ class WalkForwardBacktester:
         self.purge_days = purge_days
         self.embargo_days = embargo_days
         self.initial_investment = initial_investment
+        self.strategy_name = strategy_name
+        self.on_step_end = on_step_end
 
     def run(self) -> Dict[str, Any]:
         """运行 Expanding Window 回测。
@@ -145,8 +149,12 @@ class WalkForwardBacktester:
             train_cov = train_returns.cov()
 
             # --- 执行策略 ---
-            pool_items = list(self.strategy_pool.items())
-            strategy_name, strategy_fn = pool_items[0]
+            if self.strategy_name is not None and self.strategy_name in self.strategy_pool:
+                strategy_name = self.strategy_name
+                strategy_fn = self.strategy_pool[self.strategy_name]
+            else:
+                pool_items = list(self.strategy_pool.items())
+                strategy_name, strategy_fn = pool_items[0]
             weights = strategy_fn(train_returns, train_cov)
             weights = np.asarray(weights, dtype=float)
             if not np.all(np.isfinite(weights)):
@@ -158,7 +166,7 @@ class WalkForwardBacktester:
                 # Use nominal trade value = initial_investment * current portfolio_value * turnover
                 trade_value = self.initial_investment * portfolio_value * turnover
                 abs_cost = self.cost_model.round_trip_cost(trade_value)
-                cost_pct = abs_cost / max(self.initial_investment * portfolio_value, self.initial_investment)
+                cost_pct = abs_cost / (self.initial_investment * portfolio_value)
                 cost_pct = min(cost_pct, 0.005)  # cap at 0.5% of portfolio
                 portfolio_value *= (1.0 - cost_pct)
                 equity_series.append(portfolio_value)
@@ -188,6 +196,19 @@ class WalkForwardBacktester:
             test_ends.append(test_end_date)
             prev_weights = weights
             prev_test_end_date = test_end_date  # store for next iteration's embargo
+
+            # Post-step callback for online learning / external tracking
+            if self.on_step_end is not None:
+                test_rets_period = test_data.pct_change().iloc[1:]
+                port_ret = float(test_rets_period.dot(weights).mean())
+                self.on_step_end({
+                    "test_start": test_start_date,
+                    "test_end": test_end_date,
+                    "weights": weights.copy(),
+                    "portfolio_return": port_ret,
+                    "test_returns": test_rets_period,
+                })
+
             step += 1
 
         equity_curve = pd.Series(equity_series, index=pd.DatetimeIndex(equity_dates)) if len(equity_dates) > 0 else pd.Series(equity_series, dtype=float)
