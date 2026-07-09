@@ -22,7 +22,7 @@ class CostModel:
     """
 
     def __init__(self, commission_rate=0.00025, min_commission=5.0,
-                 slippage_bps=2.0, stamp_duty=0.0, impact_model="sqrt"):
+                 slippage_bps=2.0, stamp_duty=0.0005, impact_model="sqrt"):
         self.commission_rate = commission_rate
         self.min_commission = min_commission
         self.slippage_bps = slippage_bps

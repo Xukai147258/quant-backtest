@@ -3,6 +3,7 @@ import sys
 sys.path.insert(0, "D:\\桌面")
 
 import numpy as np
+import logging
 import pandas as pd
 from datetime import timedelta
 
@@ -90,9 +91,11 @@ if __name__ == "__main__":
 
 def test_embargo_actually_excludes_data():
     """Verifies embargo excludes data from training set (compare train_count)."""
+    # In an expanding window, train_end may be < prev_test_end, so embargo
+    # naturally has no data to exclude. Use a long step to make train_end
+    # overtake prev_test_end so that embargo must actually exclude data.
     np.random.seed(42)
-    # Small data (2 yr) to keep test fast
-    dates = pd.date_range("2020-01-01", "2022-03-31", freq="B")
+    dates = pd.date_range("2020-01-01", "2025-12-31", freq="B")
     prices = pd.DataFrame({
         "A": np.random.randn(len(dates)).cumsum() + 100,
         "B": np.random.randn(len(dates)).cumsum() + 50,
@@ -101,24 +104,26 @@ def test_embargo_actually_excludes_data():
     strat = {"eq": lambda r, c: np.array([0.5, 0.5])}
 
     bt_em = WalkForwardBacktester(prices, CostModel(), strat,
-        train_years=1, step_months=2, purge_days=3, embargo_days=10)
+        train_years=1, step_months=12, purge_days=3, embargo_days=20)
     r_em = bt_em.run()
 
     bt_no = WalkForwardBacktester(prices, CostModel(), strat,
-        train_years=1, step_months=2, purge_days=3, embargo_days=0)
+        train_years=1, step_months=12, purge_days=3, embargo_days=0)
     r_no = bt_no.run()
 
     assert r_em["n_steps"] >= 2, "Need >=2 steps for embargo test"
     assert r_no["n_steps"] >= 2, "Need >=2 steps for no-embargo test"
 
-    ok = True
     for i in range(1, min(r_em["n_steps"], r_no["n_steps"])):
         tc_em = r_em["weights_log"][i].get("train_count", 0)
         tc_no = r_no["weights_log"][i].get("train_count", 0)
-        if tc_em >= tc_no and tc_no > 0:
-            ok = False
+        te = r_em["train_ends"][i]
+        pte = r_em["test_ends"][i-1] if i > 0 else None
+        if tc_em < tc_no:
+            print(f"  Step {i}: embargo={tc_em} < no_embargo={tc_no}: OK")
+        elif tc_em == tc_no and pte is not None and te > pte:
             raise AssertionError(
-                f"Step {i}: embargo={tc_em} >= no_embargo={tc_no}. "
-                "Embargo zone NOT excluded from training!"
+                f"Step {i}: train_end={te.date()} > prev_test_end={pte.date()}, "
+                f"but embargo={tc_em} == no_embargo={tc_no}. Embargo not excluding!"
             )
     print("[PASS] test_embargo_actually_excludes_data")

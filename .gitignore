@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.class
@@ -10,6 +10,10 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# Patch / temp files
+_patch_*.py
+trust_check_report/
 
 # Test
 .pytest_cache/
@@ -27,3 +31,16 @@ _prototypes/
 
 # Codex/Agent
 .codex/
+
+# Automation framework data
+tasks/*.json
+
+# Temp / fix scripts
+fix_*.py
+patch_*.py
+create_*.py
+debug_*.py
+write_*.py
+# Automation checkpoints
+checkpoints/
+check_trust/

@@ -83,6 +83,7 @@ class WalkForwardBacktester:
         equity_dates = []
         weights_log: list = []
         signal_log: list = []
+        embargo_log: list = []
         train_ends: list = []
         test_starts: list = []
         test_ends: list = []
@@ -116,10 +117,19 @@ class WalkForwardBacktester:
             # T1: Embargo exclusion — exclude [prev_test_end, prev_test_end + embargo]
             if prev_test_end_date is not None:
                 # Embargo: exclude data from the training set near the test period
-                # Removes [train_end - embargo, train_end - 1]
-                embargo_start = train_end_date - timedelta(days=self.embargo_days)
-                embargo_end = train_end_date - timedelta(days=1)
+                # Removes [prev_test_end, prev_test_end + embargo_days] to prevent serial correlation contamination
+                embargo_start = prev_test_end_date
+                embargo_end = prev_test_end_date + timedelta(days=self.embargo_days)
                 train_mask = train_mask & ~((idx >= embargo_start) & (idx <= embargo_end))
+
+                excluded_count = int(((idx >= embargo_start) & (idx <= embargo_end) & (idx <= train_end_date)).sum())
+                embargo_log.append({
+                    'step': step,
+                    'prev_test_end': prev_test_end_date,
+                    'embargo_start': embargo_start,
+                    'embargo_end': embargo_end,
+                    'excluded_count': excluded_count,
+                })
 
             if train_mask.sum() < 20:
                 break
@@ -160,6 +170,15 @@ class WalkForwardBacktester:
             if not np.all(np.isfinite(weights)):
                 n_a = self.prices.shape[1]
                 weights = np.ones(n_a) / n_a
+
+            # Record signal for T+0 bias check
+            signal_log.append({
+                'strategy': strategy_name,
+                'compute_date': train_end_date,
+                'apply_date': test_start_date,
+                'weights': weights.tolist(),
+                'n_assets': len(weights),
+            })
 
             if prev_weights is not None:
                 turnover = np.abs(weights - prev_weights).sum()
@@ -218,6 +237,7 @@ class WalkForwardBacktester:
             "equity_curve": equity_curve,
             "weights_log": weights_log,
             "signal_log": signal_log,
+            "embargo_log": embargo_log,
             "train_ends": train_ends,
             "test_starts": test_starts,
             "test_ends": test_ends,

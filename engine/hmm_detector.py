@@ -94,9 +94,13 @@ class RollingHMMDetector:
         # 记录
         self.history.append({
             "n_obs": len(features),
+            "fit_start": str(features.index[0]),
+            "fit_end": str(features.index[-1]),
             "bic": bic,
             "log_likelihood": log_likelihood,
             "n_params": n_params,
+            "scaler_mean": scaler.mean_.tolist(),
+            "scaler_scale": scaler.scale_.tolist(),
             "states_distribution": {
                 str(s): int((states == s).sum()) for s in range(self.n_states)
             },
